@@ -1,0 +1,56 @@
+Comment: Collect Information Pipeline. Convert blog to voice.
+StartAt: Get PullRequest Information
+States:
+  Get PullRequest Information:
+    Type: Task
+    Resource: ${FetchPullRequestInfoFunctionArn}
+    ResultPath: $.PullRequestInfo
+    Retry:
+      - ErrorEquals:
+          - Lambda.ServiceException
+          - Lambda.AWSLambdaException
+          - Lambda.SdkClientException
+          - Lambda.TooManyRequestsException
+        IntervalSeconds: 2
+        MaxAttempts: 2
+        BackoffRate: 2
+    Next: Get Markdown File Path
+  Get Markdown File Path:
+    Type: Task
+    Resource: ${FetchMarkdownFilePathFunctionArn}
+    ResultPath: $.MarkdownFile
+    Retry:
+      - ErrorEquals:
+          - Lambda.ServiceException
+          - Lambda.AWSLambdaException
+          - Lambda.SdkClientException
+          - Lambda.TooManyRequestsException
+        IntervalSeconds: 2
+        MaxAttempts: 2
+        BackoffRate: 2
+    Next: Get Html File Path
+  Get Html File Path:
+    Type: Task
+    Resource: ${FetchHtmlFilePathFunctionArn}
+    ResultPath: $.HtmlFile
+    Retry:
+      - ErrorEquals:
+          - Lambda.ServiceException
+          - Lambda.AWSLambdaException
+          - Lambda.SdkClientException
+          - Lambda.TooManyRequestsException
+        IntervalSeconds: 2
+        MaxAttempts: 2
+        BackoffRate: 2
+    Next: Post PullRequest Info Event
+  Post PullRequest Info Event:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Parameters:
+      Entries:
+        - Source: PollyApplication
+          DetailType: PullRequestInfo
+          Detail:
+            Data.$: $
+          EventBusName: ${EventBridgeBusName}
+    End: True

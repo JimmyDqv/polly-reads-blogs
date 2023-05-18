@@ -1,0 +1,142 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: "AWS::Serverless-2016-10-31"
+Description: Polly voice my blog - Collect Information Pipeline
+Parameters:
+  Application:
+    Type: String
+    Description: Name of owning application
+  CommonInfraStackName:
+    Type: String
+    Description: Name of common infrastructure stack
+  Repo:
+    Type: String
+    Description: Name of the GitHub Repo
+  RepoOwner:
+    Type: String
+    Description: Name of the GitHub RepoOwner
+  AppSecrets:
+    Type: String
+    Description: Name of the App Secrets in SecretsManager
+  S3StagingBucket:
+    Type: String
+    Description: Name of the Staging S3 Bucket
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 2048
+
+Resources:
+  ##########################################################################
+  ## COLLECT INFORMATION STEP FUNCTION
+  ##########################################################################
+  CollectPullRequestInfoStateMachineStandard:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachine/collect-info.asl.yaml
+      Tracing:
+        Enabled: true
+      DefinitionSubstitutions:
+        FetchPullRequestInfoFunctionArn: !GetAtt FetchPullRequestInfoFunction.Arn
+        FetchMarkdownFilePathFunctionArn: !GetAtt FetchMarkdownFilePathFunction.Arn
+        FetchHtmlFilePathFunctionArn: !GetAtt FetchHtmlFilePathFunction.Arn
+        EventBridgeBusName:
+          Fn::ImportValue: !Sub "${CommonInfraStackName}:eventbridge-bus-name"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:*
+              Resource: "*"
+        - LambdaInvokePolicy:
+            FunctionName: !Ref FetchMarkdownFilePathFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref FetchPullRequestInfoFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref FetchHtmlFilePathFunction
+        - EventBridgePutEventsPolicy:
+            EventBusName:
+              Fn::ImportValue: !Sub "${CommonInfraStackName}:eventbridge-bus-name"
+      Events:
+        StateChange:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName:
+              Fn::ImportValue: !Sub "${CommonInfraStackName}:eventbridge-bus-name"
+            Pattern:
+              source:
+                - GithubActions
+              detail-type:
+                - PullRequestOpen
+      Type: STANDARD
+
+  ##########################################################################
+  #   INFRASTRUCTURE
+  ##########################################################################
+  # ETLBucket:
+  # Type: AWS::S3::Bucket
+  # Properties:
+  #   BucketEncryption:
+  #     ServerSideEncryptionConfiguration:
+  #       - ServerSideEncryptionByDefault:
+  #           SSEAlgorithm: AES256
+  #   BucketName: !Sub ${Application}-etl-bucket
+  #   NotificationConfiguration:
+  #     EventBridgeConfiguration:
+  #       EventBridgeEnabled: true
+  #   Tags:
+  #     - Key: Application
+  #       Value: !Ref Application
+
+  ##########################################################################
+  #   LAMBDA FUNCTIONS                                                     #
+  ##########################################################################
+  FetchMarkdownFilePathFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/FetchMarkdownFilePath
+      Handler: app.handler
+      Runtime: nodejs14.x
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - SecretsManagerReadWrite
+      Environment:
+        Variables:
+          REPO: !Ref Repo
+          OWNER: !Ref RepoOwner
+          APP_SECRETS: !Ref AppSecrets
+      Tags:
+        Application: !Ref Application
+
+  FetchPullRequestInfoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/FetchPullRequestInfo
+      Handler: app.handler
+      Runtime: nodejs14.x
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - SecretsManagerReadWrite
+      Environment:
+        Variables:
+          REPO: !Ref Repo
+          OWNER: !Ref RepoOwner
+          APP_SECRETS: !Ref AppSecrets
+      Tags:
+        Application: !Ref Application
+
+  FetchHtmlFilePathFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/FetchHtmlFilePath
+      Handler: app.handler
+      Runtime: nodejs14.x
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - S3ReadPolicy:
+            BucketName: !Ref S3StagingBucket
+      Environment:
+        Variables:
+          S3_STAGING_BUCKET: !Ref S3StagingBucket
+      Tags:
+        Application: !Ref Application

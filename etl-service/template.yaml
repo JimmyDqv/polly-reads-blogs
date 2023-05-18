@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: "AWS::Serverless-2016-10-31"
+Description: Polly voice my blog - ETL Pipeline
+Parameters:
+  Application:
+    Type: String
+    Description: Name of owning application
+  CommonInfraStackName:
+    Type: String
+    Description: Name of common infrastructure stack
+  S3StagingBucket:
+    Type: String
+    Description: Name of the Staging S3 Bucket
+
+Globals:
+  Function:
+    Runtime: python3.9
+    Timeout: 30
+    MemorySize: 2048
+
+Resources:
+  ##########################################################################
+  ## ETL STEP FUNCTION
+  ##########################################################################
+  ETLStateMachineStandard:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachine/etl.asl.yaml
+      Tracing:
+        Enabled: true
+      DefinitionSubstitutions:
+        ExtractFunctionArn: !GetAtt ETLPipelineExtractFunction.Arn
+        TransformFunctionArn: !GetAtt ETLPipelineTransformFunction.Arn
+        EventBridgeBusName:
+          Fn::ImportValue: !Sub "${CommonInfraStackName}:eventbridge-bus-name"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:*
+              Resource: "*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - polly:StartSpeechSynthesisTask
+                - polly:GetSpeechSynthesisTask
+              Resource: "*"
+        - S3CrudPolicy:
+            BucketName: !Ref ETLBucket
+        - S3CrudPolicy:
+            BucketName: !Ref S3StagingBucket
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ETLPipelineExtractFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref ETLPipelineTransformFunction
+        - EventBridgePutEventsPolicy:
+            EventBusName:
+              Fn::ImportValue: !Sub "${CommonInfraStackName}:eventbridge-bus-name"
+      Events:
+        StateChange:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName:
+              Fn::ImportValue: !Sub "${CommonInfraStackName}:eventbridge-bus-name"
+            Pattern:
+              source:
+                - PollyApplication
+              detail-type:
+                - PullRequestInfo
+      Type: STANDARD
+
+  ##########################################################################
+  #   INFRASTRUCTURE
+  ##########################################################################
+  ETLBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      BucketName: !Sub ${Application}-etl-bucket
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
+      Tags:
+        - Key: Application
+          Value: !Ref Application
+
+  ##########################################################################
+  #   LAMBDA FUNCTIONS                                                     #
+  ##########################################################################
+  ETLPipelineExtractFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/Extract
+      Handler: extract.handler
+      Environment:
+        Variables:
+          ETL_BUCKET: !Ref ETLBucket
+          STAGING_BUCKET: !Ref S3StagingBucket
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref ETLBucket
+        - S3CrudPolicy:
+            BucketName: !Ref S3StagingBucket
+      Tags:
+        Application: !Ref Application
+
+  ETLPipelineTransformFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/Transform
+      Handler: transform.handler
+      Environment:
+        Variables:
+          ETL_BUCKET: !Ref ETLBucket
+          STAGING_BUCKET: !Ref S3StagingBucket
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref ETLBucket
+        - S3CrudPolicy:
+            BucketName: !Ref S3StagingBucket
+      Tags:
+        Application: !Ref Application

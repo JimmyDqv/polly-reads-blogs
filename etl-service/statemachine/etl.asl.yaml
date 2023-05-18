@@ -1,0 +1,92 @@
+Comment: ETL pipeline. Convert blog to voice.
+StartAt: FilterData
+States:
+  FilterData:
+    Type: Pass
+    OutputPath: $.detail.Data
+    Next: Extract
+  Extract:
+    Type: Task
+    Resource: ${ExtractFunctionArn}
+    ResultPath: $.XML
+    Retry:
+      - ErrorEquals:
+          - Lambda.ServiceException
+          - Lambda.AWSLambdaException
+          - Lambda.SdkClientException
+          - Lambda.TooManyRequestsException
+        IntervalSeconds: 2
+        MaxAttempts: 2
+        BackoffRate: 2
+    Next: Transform
+  Transform:
+    Type: Task
+    Resource: ${TransformFunctionArn}
+    ResultPath: $.SSML
+    Retry:
+      - ErrorEquals:
+          - Lambda.ServiceException
+          - Lambda.AWSLambdaException
+          - Lambda.SdkClientException
+          - Lambda.TooManyRequestsException
+        IntervalSeconds: 2
+        MaxAttempts: 2
+        BackoffRate: 2
+    Next: Start Speech Synthesis
+  Start Speech Synthesis:
+    Type: Task
+    Parameters:
+      Engine: neural
+      LanguageCode: en-US
+      OutputFormat: mp3
+      OutputS3BucketName.$: $.SSML.Bucket
+      OutputS3KeyPrefix.$: $.SSML.Key
+      TextType: ssml
+      Text.$: $.SSML.Content
+      VoiceId: Joanna
+    Resource: arn:aws:states:::aws-sdk:polly:startSpeechSynthesisTask
+    ResultPath: $.Voice
+    Next: Get Speech Synthesis Status
+  Get Speech Synthesis Status:
+    Type: Task
+    Parameters:
+      TaskId.$: $.Voice.SynthesisTask.TaskId
+    Resource: arn:aws:states:::aws-sdk:polly:getSpeechSynthesisTask
+    ResultPath: $.Voice
+    Next: Speech Synthesis Done?
+  Speech Synthesis Done?:
+    Type: Choice
+    Choices:
+      - Variable: $.Voice.SynthesisTask.TaskStatus
+        StringMatches: completed
+        Next: Post Voice Event
+        Comment: Completed!
+      - Variable: $.Voice.SynthesisTask.TaskStatus
+        StringMatches: failed
+        Next: Failed
+        Comment: Failed!
+    Default: Wait
+  Post Voice Event:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Parameters:
+      Entries:
+        - Source: PollyApplication
+          DetailType: VoiceGenerated
+          Detail:
+            Voice.$: $.Voice.SynthesisTask
+            PullRequestInfo.$: $.PullRequestInfo
+            MarkdownFile.$: $.MarkdownFile
+            HtmlFile.$: $.HtmlFile
+          EventBusName: ${EventBridgeBusName}
+    Next: Completed
+  Completed:
+    Type: Pass
+    End: true
+  Failed:
+    Type: Pass
+    End: true
+  Wait:
+    Type: Wait
+    Seconds: 10
+    Next: Get Speech Synthesis Status

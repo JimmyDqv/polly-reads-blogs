@@ -1,0 +1,36 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: "AWS::Serverless-2016-10-31"
+Description: Polly voice my blog - Common infrastructure
+Parameters:
+  Application:
+    Type: String
+    Description: Name of owning application
+  EventBridgeName:
+    Type: String
+    Description: Name of EventBridge
+Resources:
+  ######################################################################
+  ## EventBridge
+  ######################################################################
+  EventBridgeBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Ref EventBridgeName
+      Tags:
+        - Key: Application
+          Value: !Ref Application
+
+##########################################################################
+#  Outputs                                                               #
+##########################################################################
+Outputs:
+  EventBridgeName:
+    Description: The IoT BBQ EventBus Name
+    Value: !Ref EventBridgeBus
+    Export:
+      Name: !Sub ${AWS::StackName}:eventbridge-bus-name
+  EventBridgeArn:
+    Description: The IoT BBQ EventBus ARN
+    Value: !GetAtt EventBridgeBus.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}:eventbridge-bus-arn

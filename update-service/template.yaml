@@ -1,0 +1,109 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: "AWS::Serverless-2016-10-31"
+Description: Polly voice my blog - Update Pull Request
+Parameters:
+  Application:
+    Type: String
+    Description: Name of owning application
+  CommonInfraStackName:
+    Type: String
+    Description: Name of common infrastructure stack
+  Repo:
+    Type: String
+    Description: Name of the GitHub Repo
+  RepoOwner:
+    Type: String
+    Description: Name of the GitHub RepoOwner
+  AppSecrets:
+    Type: String
+    Description: Name of the App Secrets in SecretsManager
+  S3StagingBucket:
+    Type: String
+    Description: Name of the Staging S3 Bucket
+  S3ETLBucket:
+    Type: String
+    Description: Name of the ETL S3 Bucket
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 2048
+
+Resources:
+  ##########################################################################
+  ## Update Pull Request
+  ##########################################################################
+
+  UpdateRequestStateMachineStandard:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: statemachine/update.asl.yaml
+      Tracing:
+        Enabled: true
+      DefinitionSubstitutions:
+        UpdateMarkdownFileFunctionArn: !GetAtt UpdateMarkdownFileFunction.Arn
+        CreateNewCommitFunctionArn: !GetAtt CreateNewCommitFileFunction.Arn
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:*
+              Resource: "*"
+        - LambdaInvokePolicy:
+            FunctionName: !Ref UpdateMarkdownFileFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CreateNewCommitFileFunction
+        - S3CrudPolicy:
+            BucketName: !Ref S3ETLBucket
+      Events:
+        StateChange:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName:
+              Fn::ImportValue: !Sub "${CommonInfraStackName}:eventbridge-bus-name"
+            Pattern:
+              source:
+                - PollyApplication
+              detail-type:
+                - VoiceGenerated
+  ##########################################################################
+  #   LAMBDA FUNCTIONS
+  ##########################################################################
+  UpdateMarkdownFileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/UpdateMarkdownFile
+      Handler: app.handler
+      Runtime: nodejs14.x
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - SecretsManagerReadWrite
+        - S3CrudPolicy:
+            BucketName: !Ref S3ETLBucket
+      Environment:
+        Variables:
+          REPO: !Ref Repo
+          OWNER: !Ref RepoOwner
+          APP_SECRETS: !Ref AppSecrets
+          S3_ETL_BUCKET: !Ref S3ETLBucket
+      Tags:
+        Application: !Ref Application
+  CreateNewCommitFileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/CreateNewCommit
+      Handler: app.handler
+      Runtime: nodejs14.x
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - SecretsManagerReadWrite
+        - S3CrudPolicy:
+            BucketName: !Ref S3ETLBucket
+      Environment:
+        Variables:
+          REPO: !Ref Repo
+          OWNER: !Ref RepoOwner
+          APP_SECRETS: !Ref AppSecrets
+          S3_ETL_BUCKET: !Ref S3ETLBucket
+      Tags:
+        Application: !Ref Application

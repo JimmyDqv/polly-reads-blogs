@@ -1,0 +1,51 @@
+Comment: Update Pull Request Pipeline. Convert blog to voice.
+StartAt: FilterData
+States:
+  FilterData:
+    Type: Pass
+    OutputPath: $.detail
+    Next: Set S3 Location
+  Set S3 Location:
+    Type: Pass
+    Parameters:
+      AudioFolder.$: States.Format('{}/<YOUR-PATH-TO-AUDIO-FILES-HERE>{}/{}/',$.MarkdownFile.fileSlug, $.MarkdownFile.fileSlug,$.Voice.LanguageCode)
+      MarkdownFolder.$: States.Format('{}/<YOUR-PATH-TO-BLOG-MD-FILES-HERE>',$.MarkdownFile.fileSlug)
+    ResultPath: $.S3Location
+    Next: Copy Voice Object
+  Copy Voice Object:
+    Type: Task
+    Next: Update Markdown File
+    ResultPath: null
+    Parameters:
+      Bucket: <NAME-OF-ETL-BUCKET>
+      CopySource.$: $.Voice.OutputUri
+      Key.$: States.Format('{}{}.mp3',$.S3Location.AudioFolder,$.Voice.VoiceId)
+    Resource: arn:aws:states:::aws-sdk:s3:copyObject
+  Update Markdown File:
+    Type: Task
+    Resource: ${UpdateMarkdownFileFunctionArn}
+    ResultPath: null
+    Retry:
+      - ErrorEquals:
+          - Lambda.ServiceException
+          - Lambda.AWSLambdaException
+          - Lambda.SdkClientException
+          - Lambda.TooManyRequestsException
+        IntervalSeconds: 2
+        MaxAttempts: 2
+        BackoffRate: 2
+    Next: Create New Commit
+  Create New Commit:
+    Type: Task
+    Resource: ${CreateNewCommitFunctionArn}
+    ResultPath: $
+    Retry:
+      - ErrorEquals:
+          - Lambda.ServiceException
+          - Lambda.AWSLambdaException
+          - Lambda.SdkClientException
+          - Lambda.TooManyRequestsException
+        IntervalSeconds: 2
+        MaxAttempts: 2
+        BackoffRate: 2
+    End: True
